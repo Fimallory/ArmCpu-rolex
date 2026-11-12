@@ -1,0 +1,134 @@
+name: ArmCpu ABI compile
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_ref:
+        description: Reviewed UniXNU-rolex commit
+        required: true
+        type: string
+        default: "cfac3c87ba6a9e431e5b0f7c9ae390a75a63e27d"
+      soc_ref:
+        description: Reviewed UniXNU-msm8917-common commit
+        required: true
+        type: string
+        default: "561cf9fe9b404c750173fcbeefc81d2cb74aa66e"
+      xcode:
+        description: Installed Xcode version on macos-26
+        required: true
+        type: string
+        default: "26.6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: armcpu-abi-${{ github.ref }}-${{ inputs.device_ref }}-${{ inputs.soc_ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  HOMEBREW_NO_ENV_HINTS: 1
+
+jobs:
+  compile:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ inputs.xcode }}.app/Contents/Developer
+    steps:
+      - name: Check out ArmCpu fork
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ArmCpu
+          persist-credentials: false
+
+      - name: Check Xcode and reviewed source pins
+        env:
+          DEVICE_REF: ${{ inputs.device_ref }}
+          SOC_REF: ${{ inputs.soc_ref }}
+        run: |
+          if [ ! -d "$DEVELOPER_DIR" ]; then
+            echo "::error::Xcode is not installed at $DEVELOPER_DIR"
+            exit 1
+          fi
+          if ! [[ "$DEVICE_REF" =~ ^[0-9a-fA-F]{40}$ ]] || ! [[ "$SOC_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::device_ref and soc_ref must be full reviewed commit hashes"
+            exit 1
+          fi
+
+      - name: Check out UniXNU build orchestration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: UniXNU/UniXNU
+          ref: 67df14de69ae6f6ffc3480b30b70ce7667a3bd32
+          path: UniXNU
+          persist-credentials: false
+
+      - name: Check out reviewed device inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Fimallory/UniXNU-rolex
+          ref: ${{ inputs.device_ref }}
+          path: UniXNU-rolex
+          persist-credentials: false
+
+      - name: Check out reviewed SoC inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Fimallory/UniXNU-msm8917-common
+          ref: ${{ inputs.soc_ref }}
+          path: UniXNU-msm8917-common
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install host build tools
+        run: brew install cmake ninja unifdef
+
+      - name: Compile ArmCpu against XNU
+        id: compile
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 ArmCpu/scripts/ci-compile-armcpu.py \
+            --unixnu UniXNU \
+            --device UniXNU-rolex \
+            --soc UniXNU-msm8917-common \
+            --armcpu ArmCpu \
+            --artifacts ArmCpu/out/abi-compile \
+            -j 4
+
+      - name: Upload own-source ArmCpu outputs and build logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: armcpu-abi-compile
+          path: |
+            ArmCpu/out/abi-compile/libArmCpu.a
+            ArmCpu/out/abi-compile/ArmCpu.o
+            ArmCpu/out/abi-compile/*.log
+            ArmCpu/out/abi-compile/compile-command.json
+            ArmCpu/out/abi-compile/build-report.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Build summary
+        if: always()
+        env:
+          COMPILE_OUTCOME: ${{ steps.compile.outcome }}
+        run: |
+          {
+            echo "## ArmCpu ABI compile"
+            echo "Result: ${COMPILE_OUTCOME:-skipped}"
+            echo "Successful compilation is Lv1 only."
+            echo "No full kernel link qualification, prelink, IPSW, payload, firmware, or device runtime checks."
+            echo "Artifact: armcpu-abi-compile (7 days)."
+          } >> "$GITHUB_STEP_SUMMARY"
