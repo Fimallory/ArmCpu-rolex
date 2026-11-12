@@ -164,14 +164,6 @@ def main():
                 if ctx.tree.exists():
                     raise RuntimeError('Build tree already exists; select a fresh --out directory')
                 cmd_defconfig(ctx)
-                # Archive-only compile never consumes mockfs fixture objects;
-                # the inherited OS profile otherwise requests their archive
-                # before the bootstrap can produce the required C++ records.
-                ctx.config_path.write_text(ctx.config_path.read_text() +
-                                           '\nCONFIG_XNU_SOURCE_MOCKFS=n\n')
-                # Context caches the configuration at construction, before
-                # cmd_defconfig writes the newly selected target file.
-                ctx.config = parse_config(ctx.config_path.read_text())
                 specs = components.selected(ctx)
                 if 'ArmCpu' not in {spec['id'] for spec in specs}:
                     raise RuntimeError('The selected board must include the ArmCpu component')
@@ -190,7 +182,18 @@ def main():
                 env.update(kernel.version_env(modules, ctx))
                 env.update({'XNU_BOOTSTRAP': '1', 'XNU_BOOT_PROGRESS': '0',
                             'XNU_BUILD_TARGET': 'build', 'JOBS': str(args.jobs)})
+                # This pass builds no runtime progress layer, and the shared
+                # zzz-boot-progress patch currently fails to apply to the
+                # pinned bsd_init.c context. Exclude that one patch from this
+                # compile-only list; the full kernel build must rebase it.
+                # Filtering the planner keeps the rest of the shared ordering.
+                plain_plan = patches.plan
+                patches.plan = lambda context, mods: [
+                    path for path in plain_plan(context, mods)
+                    if path.name != 'zzz-boot-progress.patch']
                 env['UNIXNU_PATCH_LIST'] = str(patches.prepare(ctx, modules))
+                patches.plan = plain_plan
+                report['excluded_patches'] = ['zzz-boot-progress.patch']
                 generated = ctx.tree / 'build/generated'
                 generated.mkdir(parents=True, exist_ok=True)
                 env['UNIXNU_GENERATED_DIR'] = str(generated)
