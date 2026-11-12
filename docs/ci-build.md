@@ -11,6 +11,11 @@ Publish this workflow on the fork's default branch and enable Actions. Publish
 the reviewed device and SoC commits before dispatching it. Select the fork ref
 to compile and supply:
 
+Changes to ArmCpu.cpp, this helper or the workflow on the `rolex-gicv2` branch
+also start one compile through `push`, using the pinned defaults below.
+Documentation-only changes do not start a build. Do not also dispatch the same
+revision when a push build is already queued.
+
 | Input | Default | Purpose |
 | --- | --- | --- |
 | `device_ref` | `cfac3c87ba6a9e431e5b0f7c9ae390a75a63e27d` | Full reviewed commit of `Fimallory/UniXNU-rolex` |
