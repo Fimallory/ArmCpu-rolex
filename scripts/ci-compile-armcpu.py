@@ -164,6 +164,10 @@ def main():
                 if ctx.tree.exists():
                     raise RuntimeError('Build tree already exists; select a fresh --out directory')
                 cmd_defconfig(ctx)
+                # Context caches .config at construction, before cmd_defconfig
+                # writes the selected target file. Re-read it so the bootstrap
+                # pass and the reported flags use the real board configuration.
+                ctx.config = parse_config(ctx.config_path.read_text())
                 specs = components.selected(ctx)
                 if 'ArmCpu' not in {spec['id'] for spec in specs}:
                     raise RuntimeError('The selected board must include the ArmCpu component')
